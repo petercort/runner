@@ -375,7 +375,7 @@ namespace GitHub.Runner.Listener
 
                 var term = HostContext.GetService<ITerminal>();
                 var workflowRunId = GetGitHubContextValue(message, "run_id");
-                term.WriteLine($"{DateTime.UtcNow:u}: Running job: {message.JobDisplayName} (Job ID: {message.JobId}, Workflow run ID: {workflowRunId})");
+                term.WriteLine($"{DateTime.UtcNow:u}: Running job: {message.JobDisplayName} (Workflow run ID: {workflowRunId})");
 
                 // first job request renew succeed.
                 TaskCompletionSource<int> firstJobRequestRenewed = new();
