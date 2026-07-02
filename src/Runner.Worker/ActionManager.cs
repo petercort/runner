@@ -228,7 +228,30 @@ namespace GitHub.Runner.Worker
                     {
                         throw new Exception($"Missing download info for {lookupKey}");
                     }
-                    await DownloadRepositoryActionAsync(executionContext, downloadInfo);
+
+                    Exception downloadFailure = null;
+                    try
+                    {
+                        await DownloadRepositoryActionAsync(executionContext, downloadInfo);
+                    }
+                    catch (Exception ex)
+                    {
+                        // record the exception for telemetry, and rethrow the original exception to fail the step.
+                        downloadFailure = ex;
+                        throw;
+                    }
+                    finally
+                    {
+                        executionContext.Global.JobTelemetry.Add(new JobTelemetry()
+                        {
+                            Type = JobTelemetryType.General,
+                            Message = $"resolve_download_actions_telemetry:{StringUtil.ConvertToJson(new ActionTelemetryPayload
+                            {
+                                Operation = "download_action",
+                                Result = downloadFailure == null ? "succeeded" : downloadFailure.GetType().Name
+                            }, Newtonsoft.Json.Formatting.None)}"
+                        });
+                    }
                 }
 
                 // Parse action.yml and collect composite sub-actions for batched
@@ -398,7 +421,30 @@ namespace GitHub.Runner.Worker
             if (repositoryActions.Count > 0)
             {
                 // Get the download info
-                var downloadInfos = await GetDownloadInfoAsync(executionContext, repositoryActions);
+                IDictionary<string, WebApi.ActionDownloadInfo> downloadInfos = null;
+                Exception resolveFailure = null;
+                try
+                {
+                    downloadInfos = await GetDownloadInfoAsync(executionContext, repositoryActions);
+                }
+                catch (Exception ex)
+                {
+                    // record the exception for telemetry, and rethrow the original exception to fail the step.
+                    resolveFailure = ex;
+                    throw;
+                }
+                finally
+                {
+                    executionContext.Global.JobTelemetry.Add(new JobTelemetry()
+                    {
+                        Type = JobTelemetryType.General,
+                        Message = $"resolve_download_actions_telemetry:{StringUtil.ConvertToJson(new ActionTelemetryPayload
+                        {
+                            Operation = "resolve_actions",
+                            Result = resolveFailure == null ? "succeeded" : resolveFailure.GetType().Name
+                        }, Newtonsoft.Json.Formatting.None)}"
+                    });
+                }
 
                 // Download each action
                 foreach (var action in repositoryActions)
@@ -414,7 +460,29 @@ namespace GitHub.Runner.Worker
                         throw new Exception($"Missing download info for {lookupKey}");
                     }
 
-                    await DownloadRepositoryActionAsync(executionContext, downloadInfo);
+                    Exception downloadFailure = null;
+                    try
+                    {
+                        await DownloadRepositoryActionAsync(executionContext, downloadInfo);
+                    }
+                    catch (Exception ex)
+                    {
+                        // record the exception for telemetry, and rethrow the original exception to fail the step.
+                        downloadFailure = ex;
+                        throw;
+                    }
+                    finally
+                    {
+                        executionContext.Global.JobTelemetry.Add(new JobTelemetry()
+                        {
+                            Type = JobTelemetryType.General,
+                            Message = $"resolve_download_actions_telemetry:{StringUtil.ConvertToJson(new ActionTelemetryPayload
+                            {
+                                Operation = "download_action",
+                                Result = downloadFailure == null ? "succeeded" : downloadFailure.GetType().Name
+                            }, Newtonsoft.Json.Formatting.None)}"
+                        });
+                    }
                 }
 
                 // More preparation based on content in the repository (action.yml)
@@ -980,10 +1048,33 @@ namespace GitHub.Runner.Worker
 
             if (actionsToResolve.Count > 0)
             {
-                var downloadInfos = await GetDownloadInfoAsync(executionContext, actionsToResolve);
-                foreach (var kvp in downloadInfos)
+                IDictionary<string, WebApi.ActionDownloadInfo> downloadInfos = null;
+                Exception resolveFailure = null;
+                try
                 {
-                    resolvedDownloadInfos[kvp.Key] = kvp.Value;
+                    downloadInfos = await GetDownloadInfoAsync(executionContext, actionsToResolve);
+                    foreach (var kvp in downloadInfos)
+                    {
+                        resolvedDownloadInfos[kvp.Key] = kvp.Value;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // record the exception for telemetry, and rethrow the original exception to fail the step.
+                    resolveFailure = ex;
+                    throw;
+                }
+                finally
+                {
+                    executionContext.Global.JobTelemetry.Add(new JobTelemetry()
+                    {
+                        Type = JobTelemetryType.General,
+                        Message = $"resolve_download_actions_telemetry:{StringUtil.ConvertToJson(new ActionTelemetryPayload
+                        {
+                            Operation = "resolve_actions",
+                            Result = resolveFailure == null ? "succeeded" : resolveFailure.GetType().Name
+                        }, Newtonsoft.Json.Formatting.None)}"
+                    });
                 }
             }
         }
@@ -1108,12 +1199,6 @@ namespace GitHub.Runner.Worker
                     }
                 }
 
-                executionContext.Global.JobTelemetry.Add(new JobTelemetry()
-                {
-                    Type = JobTelemetryType.General,
-                    Message = $"Action archive cache usage: {downloadInfo.ResolvedNameWithOwner}@{downloadInfo.ResolvedSha} use cache {useActionArchiveCache} has cache {hasActionArchiveCache}"
-                });
-
                 if (!useActionArchiveCache)
                 {
                     await DownloadRepositoryArchive(executionContext, link, downloadInfo.Authentication?.Token, archiveFile);
@@ -1121,6 +1206,13 @@ namespace GitHub.Runner.Worker
 
                 var stagingDirectory = Path.Combine(tempDirectory, "_staging");
                 Directory.CreateDirectory(stagingDirectory);
+
+                var fileInfo = new FileInfo(archiveFile);
+                executionContext.Global.JobTelemetry.Add(new JobTelemetry()
+                {
+                    Type = JobTelemetryType.General,
+                    Message = $"Action archive cache usage: {downloadInfo.ResolvedNameWithOwner}@{downloadInfo.ResolvedSha} use cache {useActionArchiveCache} has cache {hasActionArchiveCache} size {fileInfo.Length} bytes"
+                });
 
 #if OS_WINDOWS
                 try
@@ -1159,7 +1251,6 @@ namespace GitHub.Runner.Worker
                     int exitCode = await processInvoker.ExecuteAsync(stagingDirectory, tar, $"-xzf \"{archiveFile}\"", null, executionContext.CancellationToken);
                     if (exitCode != 0)
                     {
-                        var fileInfo = new FileInfo(archiveFile);
                         var sha256hash = await IOUtil.GetFileContentSha256HashAsync(archiveFile);
                         throw new InvalidActionArchiveException($"Can't use 'tar -xzf' extract archive file: {archiveFile} (SHA256 '{sha256hash}', size '{fileInfo.Length}' bytes, tar outputs '{string.Join(' ', tarOutputs)}'). Action being checked out: {downloadInfo.NameWithOwner}@{downloadInfo.Ref}. return code: {exitCode}.");
                     }
@@ -1208,6 +1299,12 @@ namespace GitHub.Runner.Worker
         }
 
         private string GetWatermarkFilePath(string directory) => directory + ".completed";
+
+        private sealed class ActionTelemetryPayload
+        {
+            public string Operation { get; set; }
+            public string Result { get; set; }
+        }
 
         private ActionSetupInfo PrepareRepositoryActionAsync(IExecutionContext executionContext, Pipelines.ActionStep repositoryAction)
         {
